@@ -19,25 +19,25 @@ build-c-guests target=default-target: (build-rust-capi target) (compile-c-guest 
 
 build-rust-capi target=default-target:
     cd src/hyperlight_guest_capi && cargo build --profile {{ if target == "debug" { "dev" } else { target } }}
-    cd src/hyperlight_guest_capi && cargo build --profile {{ if target == "debug" { "dev" } else { target } }} --target x86_64-pc-windows-msvc
+    # cd src/hyperlight_guest_capi && cargo build --profile {{ if target == "debug" { "dev" } else { target } }} --target x86_64-pc-windows-msvc
 
 compile-c-guest target=default-target:
-    cd src/tests/c_guests/c_simpleguest   && {{ mkdir }} "./out/{{target}}" && clang-cl /c main.c {{ c-compile-options-pe }} {{ if target == "debug" { c-flags-debug-pe } else { c-flags-release-pe } }} {{c-include-flags-pe}} /Fo"out/{{ target }}/main.obj"
-    cd src/tests/c_guests/c_callbackguest && {{ mkdir }} "./out/{{target}}" && clang-cl /c main.c {{ c-compile-options-pe }} {{ if target == "debug" { c-flags-debug-pe } else { c-flags-release-pe } }} {{c-include-flags-pe}} /Fo"out/{{ target }}/main.obj"
-    # elf
+    # cd src/tests/c_guests/c_simpleguest   && {{ mkdir }} "./out/{{target}}" && clang-cl /c main.c {{ c-compile-options-pe }} {{ if target == "debug" { c-flags-debug-pe } else { c-flags-release-pe } }} {{c-include-flags-pe}} /Fo"out/{{ target }}/main.obj"
+    # cd src/tests/c_guests/c_callbackguest && {{ mkdir }} "./out/{{target}}" && clang-cl /c main.c {{ c-compile-options-pe }} {{ if target == "debug" { c-flags-debug-pe } else { c-flags-release-pe } }} {{c-include-flags-pe}} /Fo"out/{{ target }}/main.obj"
+    # # elf
     cd src/tests/c_guests/c_simpleguest && clang -c {{ c-compile-options-elf }} {{ if target == "debug" { c-flags-debug-elf } else { c-flags-release-elf } }} main.c {{c-include-flags-elf}} -o "out/{{ target }}/main.o"
     cd src/tests/c_guests/c_callbackguest && clang -c {{ c-compile-options-elf }} {{ if target == "debug" { c-flags-debug-elf } else { c-flags-release-elf } }} main.c {{c-include-flags-elf}} -o "out/{{ target }}/main.o"
 
 link-c-guest target=default-target:
-    cd src/tests/c_guests/c_simpleguest   && lld-link /OUT:./out/{{ target }}/simpleguest.exe   /PDB:./out/{{ target }}/simpleguest.pdb   {{c-linker-options-pe}} out/{{ target }}/main.obj {{justfile_directory()}}/target/x86_64-pc-windows-msvc/{{ target }}/hyperlight_guest_capi.lib
-    cd src/tests/c_guests/c_callbackguest && lld-link /OUT:./out/{{ target }}/callbackguest.exe /PDB:./out/{{ target }}/callbackguest.pdb {{c-linker-options-pe}} out/{{ target }}/main.obj {{justfile_directory()}}/target/x86_64-pc-windows-msvc/{{ target }}/hyperlight_guest_capi.lib
+    # cd src/tests/c_guests/c_simpleguest   && lld-link /OUT:./out/{{ target }}/simpleguest.exe   /PDB:./out/{{ target }}/simpleguest.pdb   {{c-linker-options-pe}} out/{{ target }}/main.obj {{justfile_directory()}}/target/x86_64-pc-windows-msvc/{{ target }}/hyperlight_guest_capi.lib
+    # cd src/tests/c_guests/c_callbackguest && lld-link /OUT:./out/{{ target }}/callbackguest.exe /PDB:./out/{{ target }}/callbackguest.pdb {{c-linker-options-pe}} out/{{ target }}/main.obj {{justfile_directory()}}/target/x86_64-pc-windows-msvc/{{ target }}/hyperlight_guest_capi.lib
     # elf
     cd src/tests/c_guests/c_simpleguest && ld.lld -o out/{{target}}/simpleguest {{c-linker-options-elf}} out/{{target}}/main.o -l hyperlight_guest_capi -L "{{justfile_directory()}}/target/x86_64-unknown-none/{{target}}"
     cd src/tests/c_guests/c_callbackguest && ld.lld -o out/{{target}}/callbackguest {{c-linker-options-elf}} out/{{target}}/main.o -l hyperlight_guest_capi -L "{{justfile_directory()}}/target/x86_64-unknown-none/{{target}}"
 
 move-c-guests target=default-target:
-    cp src/tests/c_guests/c_simpleguest/out/{{target}}/simpleguest.exe src/tests/c_guests/bin/{{target}}/
-    cp src/tests/c_guests/c_callbackguest/out/{{target}}/callbackguest.exe src/tests/c_guests/bin/{{target}}/
+    # cp src/tests/c_guests/c_simpleguest/out/{{target}}/simpleguest.exe src/tests/c_guests/bin/{{target}}/
+    # cp src/tests/c_guests/c_callbackguest/out/{{target}}/callbackguest.exe src/tests/c_guests/bin/{{target}}/
     # elf
     cp src/tests/c_guests/c_simpleguest/out/{{target}}/simpleguest src/tests/c_guests/bin/{{target}}/
     cp src/tests/c_guests/c_callbackguest/out/{{target}}/callbackguest src/tests/c_guests/bin/{{target}}/

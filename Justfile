@@ -32,16 +32,16 @@ guests: build-and-move-rust-guests build-and-move-c-guests
 
 build-rust-guests target=default-target:
     cd src/tests/rust_guests/callbackguest && cargo build --profile={{ if target == "debug" { "dev" } else { target } }}
-    cd src/tests/rust_guests/callbackguest && cargo build --profile={{ if target == "debug" { "dev" } else { target } }}  --target=x86_64-pc-windows-msvc
+    #cd src/tests/rust_guests/callbackguest && cargo build --profile={{ if target == "debug" { "dev" } else { target } }}  --target=x86_64-pc-windows-msvc
     cd src/tests/rust_guests/simpleguest && cargo build --profile={{ if target == "debug" { "dev" } else { target } }} 
-    cd src/tests/rust_guests/simpleguest && cargo build --profile={{ if target == "debug" { "dev" } else { target } }} --target=x86_64-pc-windows-msvc
+    #cd src/tests/rust_guests/simpleguest && cargo build --profile={{ if target == "debug" { "dev" } else { target } }} --target=x86_64-pc-windows-msvc
     cd src/tests/rust_guests/dummyguest && cargo build --profile={{ if target == "debug" { "dev" } else { target } }} 
 
 @move-rust-guests target=default-target:
     cp {{ callbackguest_source }}/{{ target }}/callbackguest* {{ rust_guests_bin_dir }}/{{ target }}/
-    cp {{ callbackguest_msvc_source }}/{{ target }}/callbackguest* {{ rust_guests_bin_dir }}/{{ target }}/
+    #cp {{ callbackguest_msvc_source }}/{{ target }}/callbackguest* {{ rust_guests_bin_dir }}/{{ target }}/
     cp {{ simpleguest_source }}/{{ target }}/simpleguest* {{ rust_guests_bin_dir }}/{{ target }}/
-    cp {{ simpleguest_msvc_source }}/{{ target }}/simpleguest* {{ rust_guests_bin_dir }}/{{ target }}/
+    #cp {{ simpleguest_msvc_source }}/{{ target }}/simpleguest* {{ rust_guests_bin_dir }}/{{ target }}/
     cp {{ dummyguest_source }}/{{ target }}/dummyguest* {{ rust_guests_bin_dir }}/{{ target }}/
 
 build-and-move-rust-guests: (build-rust-guests "debug") (move-rust-guests "debug") (build-rust-guests "release") (move-rust-guests "release")
@@ -61,22 +61,6 @@ clean-rust:
 ################
 
 # Note: most testing recipes take an optional "features" comma separated list argument. If provided, these will be passed to cargo as **THE ONLY FEATURES**, i.e. default features will be disabled.
-
-# convenience recipe to run all tests with the given target and features (similar to CI)
-test-like-ci config=default-target hypervisor="kvm":
-    @# with default features
-    just test {{config}} {{ if hypervisor == "mshv3" {"mshv3"} else {""} }}
-
-    @# with only one driver enabled + seccomp + inprocess
-    just test {{config}} inprocess,seccomp,{{ if hypervisor == "mshv" {"mshv2"} else if hypervisor == "mshv3" {"mshv3"} else {"kvm"} }}
-
-    @# make sure certain cargo features compile
-    cargo check -p hyperlight-host --features crashdump
-    cargo check -p hyperlight-host --features print_debug
-    cargo check -p hyperlight-host --features gdb
-
-    @# without any driver (should fail to compile)
-    just test-compilation-fail {{config}}
 
 # runs all tests
 test target=default-target features="": (test-unit target features) (test-isolated target features) (test-integration "rust" target features) (test-integration "c" target features) (test-seccomp target features)
