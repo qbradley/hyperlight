@@ -1621,7 +1621,6 @@ dependencies = [
  "tracing-chrome",
  "tracing-core",
  "tracing-forest",
- "tracing-log",
  "tracing-opentelemetry",
  "tracing-serde",
  "tracing-subscriber",
