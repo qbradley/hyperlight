@@ -1212,6 +1212,29 @@ mod tests {
     use crate::sandbox::SandboxConfiguration;
     use crate::{GuestBinary, HyperlightError, MultiUseSandbox, Result, UninitializedSandbox};
 
+    fn user_data_test_config(user_data_size: usize) -> SandboxConfiguration {
+        let mut cfg = SandboxConfiguration::default();
+        cfg.set_user_data_size(user_data_size);
+        let min_scratch_size = hyperlight_common::layout::min_scratch_size(
+            SandboxConfiguration::DEFAULT_INPUT_SIZE,
+            SandboxConfiguration::DEFAULT_OUTPUT_SIZE,
+            user_data_size,
+        );
+        cfg.set_scratch_size(min_scratch_size + 0x20000);
+        cfg
+    }
+
+    fn user_data_test_sandbox(user_data_size: usize) -> MultiUseSandbox {
+        let path = simple_guest_as_string().unwrap();
+        UninitializedSandbox::new(
+            GuestBinary::FilePath(path),
+            Some(user_data_test_config(user_data_size)),
+        )
+        .unwrap()
+        .evolve()
+        .unwrap()
+    }
+
     #[test]
     fn poison() {
         let mut sbox: MultiUseSandbox = {
@@ -1830,6 +1853,57 @@ mod tests {
         assert_eq!(target.call::<i32>("GetStatic", ()).unwrap(), 108);
         target.restore(good_snapshot).unwrap();
         assert_eq!(target.call::<i32>("GetStatic", ()).unwrap(), 8);
+    }
+
+    #[test]
+    fn restore_user_data_clears_region_and_leaves_sandbox_usable() {
+        const USER_DATA_SIZE: usize = 4097;
+        let mut sandbox = user_data_test_sandbox(USER_DATA_SIZE);
+        sandbox
+            .write_user_data(&vec![0xaa; USER_DATA_SIZE])
+            .unwrap();
+        let snapshot = sandbox.snapshot().unwrap();
+
+        sandbox
+            .write_user_data(&vec![0xbb; USER_DATA_SIZE])
+            .unwrap();
+        sandbox.restore(snapshot).unwrap();
+
+        let mut out = vec![0xff; USER_DATA_SIZE];
+        sandbox.read_user_data(&mut out).unwrap();
+        assert!(out.iter().all(|byte| *byte == 0));
+        assert_eq!(sandbox.call::<i32>("GetStatic", ()).unwrap(), 0);
+    }
+
+    #[test]
+    fn restore_user_data_cleared_by_deprecated_restoring_call_path() {
+        const USER_DATA_SIZE: usize = 4097;
+        let mut sandbox = user_data_test_sandbox(USER_DATA_SIZE);
+        sandbox
+            .write_user_data(&vec![0xaa; USER_DATA_SIZE])
+            .unwrap();
+
+        #[allow(deprecated)]
+        let _: i32 = sandbox
+            .call_guest_function_by_name("GetStatic", ())
+            .unwrap();
+
+        let mut out = vec![0xff; USER_DATA_SIZE];
+        sandbox.read_user_data(&mut out).unwrap();
+        assert!(out.iter().all(|byte| *byte == 0));
+        assert_eq!(sandbox.call::<i32>("GetStatic", ()).unwrap(), 0);
+    }
+
+    #[test]
+    fn restore_user_data_rejects_capacity_mismatch() {
+        let mut source = user_data_test_sandbox(4097);
+        let mut target = user_data_test_sandbox(64 * 1024);
+
+        let snapshot = source.snapshot().unwrap();
+        let err = target.restore(snapshot);
+        assert!(matches!(err, Err(HyperlightError::SnapshotLayoutMismatch)));
+
+        assert_eq!(target.call::<i32>("GetStatic", ()).unwrap(), 0);
     }
 
     /// `snapshot.regions()` is empty post-compaction, so restore

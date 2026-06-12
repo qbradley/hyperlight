@@ -50,7 +50,8 @@ use hyperlight_guest_bin::guest_function::definition::{GuestFunc, GuestFunctionD
 use hyperlight_guest_bin::guest_function::register::register_function;
 use hyperlight_guest_bin::host_comm::{
     call_host_function, call_host_function_without_returning_result, get_host_return_value_raw,
-    print_output_with_host_print, read_n_bytes_from_user_memory,
+    print_output_with_host_print, read_n_bytes_from_user_memory, read_user_data, user_data_ptr,
+    user_data_size,
 };
 use hyperlight_guest_bin::memory::malloc;
 use hyperlight_guest_bin::{GUEST_HANDLE, guest_function, guest_logger, host_function};
@@ -746,6 +747,59 @@ fn read_from_user_memory(num: u64, expected: Vec<u8>) -> Result<Vec<u8>> {
         ));
     }
 
+    Ok(bytes)
+}
+
+#[guest_function("UserDataSize")]
+fn get_user_data_size() -> Result<u64> {
+    user_data_size()
+}
+
+#[guest_function("UserDataAddress")]
+fn get_user_data_address() -> Result<u64> {
+    Ok(user_data_ptr()? as u64)
+}
+
+fn user_data_slice_mut(len: u64) -> Result<&'static mut [u8]> {
+    let capacity = user_data_size()?;
+    if len > capacity {
+        return Err(HyperlightGuestError::new(
+            ErrorCode::GuestError,
+            "User data length exceeds configured capacity".to_string(),
+        ));
+    }
+    let len = usize::try_from(len).map_err(|_| {
+        HyperlightGuestError::new(
+            ErrorCode::GuestError,
+            "User data length exceeds usize::MAX".to_string(),
+        )
+    })?;
+    Ok(unsafe { core::slice::from_raw_parts_mut(user_data_ptr()?, len) })
+}
+
+#[guest_function("VerifyUserDataZeros")]
+fn verify_user_data_zeros(len: u64) -> Result<bool> {
+    Ok(user_data_slice_mut(len)?.iter().all(|byte| *byte == 0))
+}
+
+#[guest_function("TransformUserData")]
+fn transform_user_data(len: u64) -> Result<i32> {
+    let bytes = user_data_slice_mut(len)?;
+    for byte in bytes.iter_mut() {
+        *byte = byte.wrapping_add(1);
+    }
+    Ok(bytes.len() as i32)
+}
+
+#[guest_function("ReadUserData")]
+fn read_user_data_guest(len: u64, expected: Vec<u8>) -> Result<Vec<u8>> {
+    let bytes = read_user_data(len)?;
+    if bytes != expected {
+        return Err(HyperlightGuestError::new(
+            ErrorCode::GuestError,
+            "User data does not contain the expected data".to_string(),
+        ));
+    }
     Ok(bytes)
 }
 

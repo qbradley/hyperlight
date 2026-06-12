@@ -218,6 +218,55 @@ hl_Vec *get_size_prefixed_buffer(const hl_FunctionCall* params) {
   return hl_flatbuffer_result_from_Bytes(input.data, input.len);
 }
 
+uint64_t user_data_size(void) {
+  return (uint64_t)hl_user_data_size();
+}
+
+uint64_t user_data_address(void) {
+  return (uint64_t)(uintptr_t)hl_user_data_ptr();
+}
+
+bool verify_user_data_zeros(uint64_t len) {
+  uint8_t *user_data = hl_user_data_ptr();
+  size_t user_data_size = hl_user_data_size();
+  if (len > user_data_size) {
+    return false;
+  }
+  for (uint64_t i = 0; i < len; i++) {
+    if (user_data[i] != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+int transform_user_data(uint64_t len) {
+  uint8_t *user_data = hl_user_data_ptr();
+  size_t user_data_size = hl_user_data_size();
+  if (len > user_data_size) {
+    hl_set_error(hl_ErrorCode_GuestError, "User data transform length exceeds capacity");
+    return -1;
+  }
+  for (uint64_t i = 0; i < len; i++) {
+    user_data[i] = (uint8_t)(user_data[i] + 1);
+  }
+  return (int)len;
+}
+
+hl_Vec *read_user_data(const hl_FunctionCall* params) {
+  uint64_t len = params->parameters[0].value.ULong;
+  hl_Vec expected = params->parameters[1].value.VecBytes;
+  uint8_t *user_data = hl_user_data_ptr();
+  size_t user_data_size = hl_user_data_size();
+  if (len > user_data_size || expected.len != len ||
+      memcmp(user_data, expected.data, len) != 0) {
+    uint8_t empty = 0;
+    hl_set_error(hl_ErrorCode_GuestError, "User data does not contain the expected data");
+    return hl_flatbuffer_result_from_Bytes(&empty, 0);
+  }
+  return hl_flatbuffer_result_from_Bytes(user_data, len);
+}
+
 int guest_abort_with_code(int32_t code) {
   hl_abort_with_code(code);
   return -1;
@@ -360,6 +409,10 @@ HYPERLIGHT_WRAP_FUNCTION(print_eleven_args, Int, 11, String, Int, Long, String, 
 HYPERLIGHT_WRAP_FUNCTION(echo_float, Float, 1, Float)
 HYPERLIGHT_WRAP_FUNCTION(echo_double, Double, 1, Double)
 HYPERLIGHT_WRAP_FUNCTION(set_static, Int, 0)
+HYPERLIGHT_WRAP_FUNCTION(user_data_size, ULong, 0)
+HYPERLIGHT_WRAP_FUNCTION(user_data_address, ULong, 0)
+HYPERLIGHT_WRAP_FUNCTION(verify_user_data_zeros, Bool, 1, ULong)
+HYPERLIGHT_WRAP_FUNCTION(transform_user_data, Int, 1, ULong)
 // HYPERLIGHT_WRAP_FUNCTION(get_size_prefixed_buffer, Int, 1, VecBytes) is not valid for functions that return VecBytes
 HYPERLIGHT_WRAP_FUNCTION(guest_abort_with_msg, Int, 2, Int, String)
 HYPERLIGHT_WRAP_FUNCTION(guest_abort_with_code, Int, 1, Int)
@@ -399,9 +452,14 @@ void hyperlight_main(void)
     HYPERLIGHT_REGISTER_FUNCTION("EchoFloat", echo_float);
     HYPERLIGHT_REGISTER_FUNCTION("EchoDouble", echo_double);
     HYPERLIGHT_REGISTER_FUNCTION("SetStatic", set_static);
+    HYPERLIGHT_REGISTER_FUNCTION("UserDataSize", user_data_size);
+    HYPERLIGHT_REGISTER_FUNCTION("UserDataAddress", user_data_address);
+    HYPERLIGHT_REGISTER_FUNCTION("VerifyUserDataZeros", verify_user_data_zeros);
+    HYPERLIGHT_REGISTER_FUNCTION("TransformUserData", transform_user_data);
     // HYPERLIGHT_REGISTER_FUNCTION macro does not work for functions that return VecBytes,
     // so we use hl_register_function_definition directly
     hl_register_function_definition("GetSizePrefixedBuffer", get_size_prefixed_buffer, 1, (hl_ParameterType[]){hl_ParameterType_VecBytes}, hl_ReturnType_VecBytes);
+    hl_register_function_definition("ReadUserData", read_user_data, 2, (hl_ParameterType[]){hl_ParameterType_ULong, hl_ParameterType_VecBytes}, hl_ReturnType_VecBytes);
     HYPERLIGHT_REGISTER_FUNCTION("GuestAbortWithCode", guest_abort_with_code);
     HYPERLIGHT_REGISTER_FUNCTION("GuestAbortWithMessage", guest_abort_with_msg);
     HYPERLIGHT_REGISTER_FUNCTION("ExecuteOnStack", execute_on_stack);

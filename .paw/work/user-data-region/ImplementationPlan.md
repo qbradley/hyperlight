@@ -91,7 +91,7 @@ Verification will combine targeted unit tests for configuration/layout/PEB struc
 
 - [x] **Phase 1: Layout and Metadata Plumbing** - Add user data capacity to configuration, memory layout, checked scratch sizing, compatibility checks, and PEB metadata.
 - [x] **Phase 2: Host User Data API** - Add bounded memory-manager operations and public `MultiUseSandbox` capacity/read/write methods.
-- [ ] **Phase 3: Guest Access and Lifecycle Tests** - Add Rust and C guest discovery helpers, test guest functions, integration tests, and restore compatibility coverage.
+- [x] **Phase 3: Guest Access and Lifecycle Tests** - Add Rust and C guest discovery helpers, test guest functions, integration tests, and restore compatibility coverage.
 - [ ] **Phase 4: Documentation and Final Verification** - Add technical/project documentation and run final formatting, linting, build, and test commands.
 
 ## Phase Candidates
@@ -195,6 +195,10 @@ Verification will combine targeted unit tests for configuration/layout/PEB struc
 - [ ] Rust and C guest mutations are visible through host reads on the mutating/non-restoring execution path without using init-data reads.
 - [ ] Restore and convenience execution paths that restore state return positive-capacity user data bytes to zero while leaving the sandbox usable.
 - [ ] Tests and docs document that Rust bounded helpers and C pointer/capacity discovery are helper/API contracts, not VM guard isolation against arbitrary guest pointer misuse.
+
+### Phase Notes:
+
+- Capacity-scale verification command: `cargo test -p hyperlight-host user_data --test sandbox_host_tests` exercises 4097-byte, 64 KiB, and 1 MiB user data payloads across Rust and C guests. Benchmark guidance remains planned for Phase 4 documentation.
 
 ---
 

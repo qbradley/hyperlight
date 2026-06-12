@@ -14,14 +14,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#![no_std]
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+use core::ptr::null_mut;
 
-extern crate alloc;
+use hyperlight_guest_bin::host_comm::{user_data_ptr, user_data_size};
 
-pub mod dispatch;
-pub mod error;
-pub mod flatbuffer;
-pub mod logging;
-pub mod types;
-pub mod user_data;
+#[unsafe(no_mangle)]
+pub extern "C" fn hl_user_data_size() -> usize {
+    user_data_size().unwrap_or(0) as usize
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn hl_user_data_ptr() -> *mut u8 {
+    user_data_ptr().unwrap_or_else(|_| null_mut())
+}

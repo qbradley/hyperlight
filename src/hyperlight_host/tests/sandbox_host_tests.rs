@@ -29,6 +29,26 @@ use crate::common::{
     with_all_uninit_sandboxes,
 };
 
+fn user_data_test_config(user_data_size: usize) -> SandboxConfiguration {
+    let mut cfg = SandboxConfiguration::default();
+    cfg.set_user_data_size(user_data_size);
+    let min_scratch_size = hyperlight_common::layout::min_scratch_size(
+        SandboxConfiguration::DEFAULT_INPUT_SIZE,
+        SandboxConfiguration::DEFAULT_OUTPUT_SIZE,
+        user_data_size,
+    );
+    cfg.set_scratch_size(min_scratch_size + 0x20000);
+    cfg
+}
+
+fn user_data_payload(len: usize) -> Vec<u8> {
+    (0..len).map(|i| (i % 251) as u8).collect()
+}
+
+fn transformed_user_data_payload(payload: &[u8]) -> Vec<u8> {
+    payload.iter().map(|byte| byte.wrapping_add(1)).collect()
+}
+
 #[test]
 fn pass_byte_array() {
     with_all_sandboxes(|mut sandbox| {
@@ -224,6 +244,46 @@ fn small_scratch_sandbox() {
         a.unwrap_err(),
         HyperlightError::MemoryRequestTooSmall(..)
     ));
+}
+
+#[test]
+fn user_data_roundtrip_with_rust_and_c_guests() {
+    for user_data_size in [0, 1, 4097, 64 * 1024, 1024 * 1024] {
+        let cfg = user_data_test_config(user_data_size);
+        with_all_sandboxes_cfg(Some(cfg), |mut sandbox| {
+            assert_eq!(user_data_size, sandbox.user_data_size());
+
+            let guest_size: u64 = sandbox.call("UserDataSize", ()).unwrap();
+            assert_eq!(user_data_size, guest_size as usize);
+
+            let guest_address: u64 = sandbox.call("UserDataAddress", ()).unwrap();
+            assert_ne!(0, guest_address);
+
+            let guest_sees_zeroes: bool = sandbox
+                .call("VerifyUserDataZeros", user_data_size as u64)
+                .unwrap();
+            assert!(guest_sees_zeroes);
+
+            let payload = user_data_payload(user_data_size);
+            sandbox.write_user_data(&payload).unwrap();
+
+            if user_data_size <= 4097 {
+                let read_back: Vec<u8> = sandbox
+                    .call("ReadUserData", (user_data_size as u64, payload.clone()))
+                    .unwrap();
+                assert_eq!(payload, read_back);
+            }
+
+            let transformed_len: i32 = sandbox
+                .call("TransformUserData", user_data_size as u64)
+                .unwrap();
+            assert_eq!(user_data_size, transformed_len as usize);
+
+            let mut out = vec![0; user_data_size];
+            sandbox.read_user_data(&mut out).unwrap();
+            assert_eq!(transformed_user_data_payload(&payload), out);
+        });
+    }
 }
 
 #[test]
