@@ -466,9 +466,7 @@ impl SandboxMemoryLayout {
     /// the user data.
     #[instrument(skip_all, parent = Span::current(), level= "Trace")]
     pub(crate) fn get_user_data_buffer_scratch_host_offset(&self) -> usize {
-        self.input_data_size
-            .checked_add(self.output_data_size)
-            .unwrap_or(usize::MAX)
+        self.input_data_size.saturating_add(self.output_data_size)
     }
 
     /// Get the size of the user data buffer.
