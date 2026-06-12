@@ -282,6 +282,16 @@ fn user_data_roundtrip_with_rust_and_c_guests() {
             let mut out = vec![0; user_data_size];
             sandbox.read_user_data(&mut out).unwrap();
             assert_eq!(transformed_user_data_payload(&payload), out);
+
+            let half_len = user_data_size / 2;
+            let half_payload = user_data_payload(half_len);
+            sandbox.write_user_data(&half_payload).unwrap();
+            let transformed_len: i32 = sandbox.call("TransformUserData", half_len as u64).unwrap();
+            assert_eq!(half_len, transformed_len as usize);
+
+            let mut half_out = vec![0; half_len];
+            sandbox.read_user_data(&mut half_out).unwrap();
+            assert_eq!(transformed_user_data_payload(&half_payload), half_out);
         });
     }
 }

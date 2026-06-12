@@ -213,8 +213,8 @@ impl MultiUseSandbox {
     /// An optional [`SandboxConfiguration`](crate::sandbox::SandboxConfiguration)
     /// can be supplied to override runtime settings such as timeouts and
     /// interrupt behavior. Memory layout fields
-    /// (`input_data_size`, `output_data_size`, `heap_size`, `scratch_size`)
-    /// are always taken from the snapshot. Any values supplied in
+    /// (`input_data_size`, `output_data_size`, `user_data_size`, `heap_size`,
+    /// `scratch_size`) are always taken from the snapshot. Any values supplied in
     /// `config` for those fields are ignored.
     ///
     /// # Examples
@@ -272,6 +272,7 @@ impl MultiUseSandbox {
         }
         config.set_input_data_size(snapshot.layout().input_data_size);
         config.set_output_data_size(snapshot.layout().output_data_size);
+        config.set_user_data_size(snapshot.layout().user_data_size);
         config.set_heap_size(snapshot.layout().heap_size as u64);
         config.set_scratch_size(snapshot.layout().get_scratch_size());
         let load_info = snapshot.load_info();
@@ -1176,6 +1177,11 @@ fn warn_on_layout_override(
             snapshot.output_data_size as u64,
         ),
         (
+            "user_data_size",
+            caller.get_user_data_size() as u64,
+            snapshot.user_data_size as u64,
+        ),
+        (
             "heap_size",
             caller.get_heap_size(),
             snapshot.heap_size as u64,
@@ -1213,14 +1219,21 @@ mod tests {
     use crate::{GuestBinary, HyperlightError, MultiUseSandbox, Result, UninitializedSandbox};
 
     fn user_data_test_config(user_data_size: usize) -> SandboxConfiguration {
-        let mut cfg = SandboxConfiguration::default();
-        cfg.set_user_data_size(user_data_size);
         let min_scratch_size = hyperlight_common::layout::min_scratch_size(
             SandboxConfiguration::DEFAULT_INPUT_SIZE,
             SandboxConfiguration::DEFAULT_OUTPUT_SIZE,
             user_data_size,
         );
-        cfg.set_scratch_size(min_scratch_size + 0x20000);
+        user_data_test_config_with_scratch_size(user_data_size, min_scratch_size + 0x20000)
+    }
+
+    fn user_data_test_config_with_scratch_size(
+        user_data_size: usize,
+        scratch_size: usize,
+    ) -> SandboxConfiguration {
+        let mut cfg = SandboxConfiguration::default();
+        cfg.set_user_data_size(user_data_size);
+        cfg.set_scratch_size(scratch_size);
         cfg
     }
 
@@ -1896,14 +1909,53 @@ mod tests {
 
     #[test]
     fn restore_user_data_rejects_capacity_mismatch() {
-        let mut source = user_data_test_sandbox(4097);
-        let mut target = user_data_test_sandbox(64 * 1024);
+        let shared_scratch_size = hyperlight_common::layout::min_scratch_size(
+            SandboxConfiguration::DEFAULT_INPUT_SIZE,
+            SandboxConfiguration::DEFAULT_OUTPUT_SIZE,
+            64 * 1024,
+        ) + 0x20000;
+        let path = simple_guest_as_string().unwrap();
+        let mut source = UninitializedSandbox::new(
+            GuestBinary::FilePath(path),
+            Some(user_data_test_config_with_scratch_size(
+                4097,
+                shared_scratch_size,
+            )),
+        )
+        .unwrap()
+        .evolve()
+        .unwrap();
+        let path = simple_guest_as_string().unwrap();
+        let mut target = UninitializedSandbox::new(
+            GuestBinary::FilePath(path),
+            Some(user_data_test_config_with_scratch_size(
+                64 * 1024,
+                shared_scratch_size,
+            )),
+        )
+        .unwrap()
+        .evolve()
+        .unwrap();
 
         let snapshot = source.snapshot().unwrap();
         let err = target.restore(snapshot);
         assert!(matches!(err, Err(HyperlightError::SnapshotLayoutMismatch)));
 
         assert_eq!(target.call::<i32>("GetStatic", ()).unwrap(), 0);
+    }
+
+    #[test]
+    fn restore_user_data_from_snapshot_uses_snapshot_capacity() {
+        let mut source = user_data_test_sandbox(4097);
+        let snapshot = source.snapshot().unwrap();
+        let sandbox = MultiUseSandbox::from_snapshot(
+            snapshot,
+            crate::HostFunctions::default(),
+            Some(user_data_test_config(64 * 1024)),
+        )
+        .unwrap();
+
+        assert_eq!(4097, sandbox.user_data_size());
     }
 
     /// `snapshot.regions()` is empty post-compaction, so restore
