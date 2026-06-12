@@ -350,6 +350,15 @@ mod tests {
         assert_eq!(1, cfg.user_data_size);
     }
 
+    #[test]
+    fn user_data_size_accepts_representative_capacities() {
+        let mut cfg = SandboxConfiguration::default();
+        for size in [4097, 64 * 1024, 1024 * 1024] {
+            cfg.set_user_data_size(size);
+            assert_eq!(size, cfg.get_user_data_size());
+        }
+    }
+
     mod proptests {
         use proptest::prelude::*;
 

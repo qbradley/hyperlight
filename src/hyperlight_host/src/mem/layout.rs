@@ -882,31 +882,33 @@ mod tests {
 
     #[test]
     fn user_data_offset_gva_and_pt_base_follow_input_and_output() {
-        let mut cfg = SandboxConfiguration::default();
-        cfg.set_user_data_size(4097);
-        let min_scratch = hyperlight_common::layout::min_scratch_size(
-            cfg.get_input_data_size(),
-            cfg.get_output_data_size(),
-            cfg.get_user_data_size(),
-        );
-        cfg.set_scratch_size(min_scratch);
+        for user_data_size in [4097, 64 * 1024, 1024 * 1024] {
+            let mut cfg = SandboxConfiguration::default();
+            cfg.set_user_data_size(user_data_size);
+            let min_scratch = hyperlight_common::layout::min_scratch_size(
+                cfg.get_input_data_size(),
+                cfg.get_output_data_size(),
+                cfg.get_user_data_size(),
+            );
+            cfg.set_scratch_size(min_scratch);
 
-        let layout = SandboxMemoryLayout::new(cfg, 4096, 0, None).unwrap();
-        let expected_user_data_offset = cfg.get_input_data_size() + cfg.get_output_data_size();
-        assert_eq!(
-            expected_user_data_offset,
-            layout.get_user_data_buffer_scratch_host_offset()
-        );
-        assert_eq!(
-            hyperlight_common::layout::scratch_base_gva(layout.get_scratch_size())
-                + expected_user_data_offset as u64,
-            layout.get_user_data_buffer_gva()
-        );
-        assert_eq!(
-            (expected_user_data_offset + cfg.get_user_data_size())
-                .next_multiple_of(PAGE_SIZE_USIZE),
-            layout.get_pt_base_scratch_offset()
-        );
+            let layout = SandboxMemoryLayout::new(cfg, 4096, 0, None).unwrap();
+            let expected_user_data_offset = cfg.get_input_data_size() + cfg.get_output_data_size();
+            assert_eq!(
+                expected_user_data_offset,
+                layout.get_user_data_buffer_scratch_host_offset()
+            );
+            assert_eq!(
+                hyperlight_common::layout::scratch_base_gva(layout.get_scratch_size())
+                    + expected_user_data_offset as u64,
+                layout.get_user_data_buffer_gva()
+            );
+            assert_eq!(
+                (expected_user_data_offset + cfg.get_user_data_size())
+                    .next_multiple_of(PAGE_SIZE_USIZE),
+                layout.get_pt_base_scratch_offset()
+            );
+        }
     }
 
     #[test]
