@@ -139,6 +139,62 @@ impl MultiUseSandbox {
         self.pt_root_finder = Some(finder);
     }
 
+    /// Return the configured size, in bytes, of this sandbox's user data region.
+    ///
+    /// The default is `0`, which means the region has no writable or readable
+    /// capacity. The user data region is transient scratch memory: it is not
+    /// captured in snapshots and is cleared by restore.
+    #[instrument(skip_all, parent = Span::current(), level = "Trace")]
+    pub fn user_data_size(&self) -> usize {
+        self.mem_mgr.user_data_size()
+    }
+
+    /// Copy `data` into the sandbox's user data region from the beginning of the
+    /// region.
+    ///
+    /// The full slice must fit within [`user_data_size`](Self::user_data_size);
+    /// oversized writes return an error before modifying the region. Guest code
+    /// can observe these bytes during a mutating call, but convenience call paths
+    /// that restore the sandbox before the host reads will clear the region.
+    ///
+    /// This is distinct from init-data/user-memory helpers: user data lives in
+    /// transient scratch memory and is not part of snapshot state.
+    ///
+    /// ## Poisoned Sandbox
+    ///
+    /// This method returns [`crate::HyperlightError::PoisonedSandbox`] if the
+    /// sandbox is currently poisoned. Use [`restore`](Self::restore) to recover.
+    #[instrument(err(Debug), skip_all, parent = Span::current(), level = "Trace")]
+    pub fn write_user_data(&mut self, data: &[u8]) -> Result<()> {
+        if self.poisoned {
+            return Err(crate::HyperlightError::PoisonedSandbox);
+        }
+        self.mem_mgr.write_user_data(data)
+    }
+
+    /// Copy bytes from the sandbox's user data region into `out` from the
+    /// beginning of the region.
+    ///
+    /// The full output buffer must fit within
+    /// [`user_data_size`](Self::user_data_size). Reads larger than the configured
+    /// capacity return an error rather than exposing adjacent scratch memory.
+    /// Guest mutations are observable only until a restore clears scratch memory.
+    ///
+    /// This is distinct from init-data/user-memory helpers: user data lives in
+    /// transient scratch memory and is not part of snapshot state.
+    ///
+    /// ## Poisoned Sandbox
+    ///
+    /// This method returns [`crate::HyperlightError::PoisonedSandbox`] if the
+    /// sandbox is currently poisoned. Use [`restore`](Self::restore) to recover.
+    #[instrument(err(Debug), skip_all, parent = Span::current(), level = "Trace")]
+    pub fn read_user_data(&mut self, out: &mut [u8]) -> Result<()> {
+        if self.poisoned {
+            return Err(crate::HyperlightError::PoisonedSandbox);
+        }
+        self.mem_mgr.read_user_data(out)
+    }
+
     /// Create a `MultiUseSandbox` directly from a [`Snapshot`],
     /// bypassing [`UninitializedSandbox`](crate::UninitializedSandbox)
     /// and [`evolve()`](crate::UninitializedSandbox::evolve).

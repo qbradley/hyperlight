@@ -90,7 +90,7 @@ Verification will combine targeted unit tests for configuration/layout/PEB struc
 ## Phase Status
 
 - [x] **Phase 1: Layout and Metadata Plumbing** - Add user data capacity to configuration, memory layout, checked scratch sizing, compatibility checks, and PEB metadata.
-- [ ] **Phase 2: Host User Data API** - Add bounded memory-manager operations and public `MultiUseSandbox` capacity/read/write methods.
+- [x] **Phase 2: Host User Data API** - Add bounded memory-manager operations and public `MultiUseSandbox` capacity/read/write methods.
 - [ ] **Phase 3: Guest Access and Lifecycle Tests** - Add Rust and C guest discovery helpers, test guest functions, integration tests, and restore compatibility coverage.
 - [ ] **Phase 4: Documentation and Final Verification** - Add technical/project documentation and run final formatting, linting, build, and test commands.
 
