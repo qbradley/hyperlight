@@ -38,7 +38,18 @@ pub const MAX_GPA: usize = 0x0000_000f_ffff_ffff;
 /// - (up to) 3 pages for mapping that
 /// - Two pages for the exception stack and metadata
 /// - A page-aligned amount of memory for I/O buffers (for now)
-pub fn min_scratch_size(input_data_size: usize, output_data_size: usize) -> usize {
-    (input_data_size + output_data_size).next_multiple_of(crate::vmem::PAGE_SIZE)
-        + 12 * crate::vmem::PAGE_SIZE
+pub fn min_scratch_size(
+    input_data_size: usize,
+    output_data_size: usize,
+    user_data_size: usize,
+) -> usize {
+    let static_buffer_size = input_data_size
+        .checked_add(output_data_size)
+        .and_then(|size| size.checked_add(user_data_size))
+        .unwrap_or(usize::MAX);
+    let aligned_static_buffer_size = static_buffer_size
+        .checked_add(crate::vmem::PAGE_SIZE - 1)
+        .map(|size| size / crate::vmem::PAGE_SIZE * crate::vmem::PAGE_SIZE)
+        .unwrap_or(usize::MAX);
+    aligned_static_buffer_size.saturating_add(12 * crate::vmem::PAGE_SIZE)
 }

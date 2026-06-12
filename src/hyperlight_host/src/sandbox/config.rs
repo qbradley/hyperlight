@@ -50,6 +50,9 @@ pub struct SandboxConfiguration {
     /// The size of the memory buffer that is made available for input to the
     /// Guest Binary
     output_data_size: usize,
+    /// The size of the memory buffer that is made available for user data
+    /// shared between the host and Guest Binary.
+    user_data_size: usize,
     /// The heap size to use in the guest sandbox. If set to 0, the heap
     /// size will be determined from the PE file header
     ///
@@ -85,6 +88,8 @@ impl SandboxConfiguration {
     pub const DEFAULT_OUTPUT_SIZE: usize = 0x4000;
     /// The minimum size of output data
     pub const MIN_OUTPUT_SIZE: usize = 0x2000;
+    /// The default size of user data.
+    pub const DEFAULT_USER_DATA_SIZE: usize = 0;
     /// The default interrupt retry delay
     pub const DEFAULT_INTERRUPT_RETRY_DELAY: Duration = Duration::from_micros(500);
     /// The default signal offset from `SIGRTMIN` used to determine the signal number for interrupting
@@ -100,6 +105,7 @@ impl SandboxConfiguration {
     fn new(
         input_data_size: usize,
         output_data_size: usize,
+        user_data_size: usize,
         heap_size_override: Option<u64>,
         scratch_size: usize,
         interrupt_retry_delay: Duration,
@@ -110,6 +116,7 @@ impl SandboxConfiguration {
         Self {
             input_data_size: max(input_data_size, Self::MIN_INPUT_SIZE),
             output_data_size: max(output_data_size, Self::MIN_OUTPUT_SIZE),
+            user_data_size,
             heap_size_override: heap_size_override.unwrap_or(0),
             scratch_size,
             interrupt_retry_delay,
@@ -133,6 +140,13 @@ impl SandboxConfiguration {
     #[instrument(skip_all, parent = Span::current(), level= "Trace")]
     pub fn set_output_data_size(&mut self, output_data_size: usize) {
         self.output_data_size = max(output_data_size, Self::MIN_OUTPUT_SIZE);
+    }
+
+    /// Set the size of the memory buffer that is made available for user data shared
+    /// between the host and guest.
+    #[instrument(skip_all, parent = Span::current(), level= "Trace")]
+    pub fn set_user_data_size(&mut self, user_data_size: usize) {
+        self.user_data_size = user_data_size;
     }
 
     /// Set the heap size to use in the guest sandbox. If set to 0, the heap size will be determined from the PE file header
@@ -205,6 +219,11 @@ impl SandboxConfiguration {
     }
 
     #[instrument(skip_all, parent = Span::current(), level= "Trace")]
+    pub(crate) fn get_user_data_size(&self) -> usize {
+        self.user_data_size
+    }
+
+    #[instrument(skip_all, parent = Span::current(), level= "Trace")]
     pub(crate) fn get_scratch_size(&self) -> usize {
         self.scratch_size
     }
@@ -247,6 +266,7 @@ impl Default for SandboxConfiguration {
         Self::new(
             Self::DEFAULT_INPUT_SIZE,
             Self::DEFAULT_OUTPUT_SIZE,
+            Self::DEFAULT_USER_DATA_SIZE,
             None,
             Self::DEFAULT_SCRATCH_SIZE,
             Self::DEFAULT_INTERRUPT_RETRY_DELAY,
@@ -268,10 +288,12 @@ mod tests {
         const HEAP_SIZE_OVERRIDE: u64 = 0x50000;
         const INPUT_DATA_SIZE_OVERRIDE: usize = 0x4000;
         const OUTPUT_DATA_SIZE_OVERRIDE: usize = 0x4001;
+        const USER_DATA_SIZE_OVERRIDE: usize = 0x1234;
         const SCRATCH_SIZE_OVERRIDE: usize = 0x60000;
         let mut cfg = SandboxConfiguration::new(
             INPUT_DATA_SIZE_OVERRIDE,
             OUTPUT_DATA_SIZE_OVERRIDE,
+            USER_DATA_SIZE_OVERRIDE,
             Some(HEAP_SIZE_OVERRIDE),
             SCRATCH_SIZE_OVERRIDE,
             SandboxConfiguration::DEFAULT_INTERRUPT_RETRY_DELAY,
@@ -293,6 +315,7 @@ mod tests {
         assert_eq!(0x40000, cfg.scratch_size);
         assert_eq!(INPUT_DATA_SIZE_OVERRIDE, cfg.input_data_size);
         assert_eq!(OUTPUT_DATA_SIZE_OVERRIDE, cfg.output_data_size);
+        assert_eq!(USER_DATA_SIZE_OVERRIDE, cfg.user_data_size);
     }
 
     #[test]
@@ -300,6 +323,7 @@ mod tests {
         let mut cfg = SandboxConfiguration::new(
             SandboxConfiguration::MIN_INPUT_SIZE - 1,
             SandboxConfiguration::MIN_OUTPUT_SIZE - 1,
+            SandboxConfiguration::DEFAULT_USER_DATA_SIZE,
             None,
             SandboxConfiguration::DEFAULT_SCRATCH_SIZE,
             SandboxConfiguration::DEFAULT_INTERRUPT_RETRY_DELAY,
@@ -312,12 +336,18 @@ mod tests {
         assert_eq!(SandboxConfiguration::MIN_INPUT_SIZE, cfg.input_data_size);
         assert_eq!(SandboxConfiguration::MIN_OUTPUT_SIZE, cfg.output_data_size);
         assert_eq!(0, cfg.heap_size_override);
+        assert_eq!(
+            SandboxConfiguration::DEFAULT_USER_DATA_SIZE,
+            cfg.user_data_size
+        );
 
         cfg.set_input_data_size(SandboxConfiguration::MIN_INPUT_SIZE - 1);
         cfg.set_output_data_size(SandboxConfiguration::MIN_OUTPUT_SIZE - 1);
+        cfg.set_user_data_size(1);
 
         assert_eq!(SandboxConfiguration::MIN_INPUT_SIZE, cfg.input_data_size);
         assert_eq!(SandboxConfiguration::MIN_OUTPUT_SIZE, cfg.output_data_size);
+        assert_eq!(1, cfg.user_data_size);
     }
 
     mod proptests {
@@ -340,6 +370,13 @@ mod tests {
                 let mut cfg = SandboxConfiguration::default();
                 cfg.set_output_data_size(size);
                 prop_assert_eq!(size, cfg.get_output_data_size());
+            }
+
+            #[test]
+            fn user_data_size(size in 0usize..=SandboxConfiguration::MIN_OUTPUT_SIZE * 10) {
+                let mut cfg = SandboxConfiguration::default();
+                cfg.set_user_data_size(size);
+                prop_assert_eq!(size, cfg.get_user_data_size());
             }
 
 
