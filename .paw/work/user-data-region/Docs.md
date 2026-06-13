@@ -29,7 +29,7 @@ The supported exchange lifecycle is host write, mutating/non-restoring guest cal
 
 ### Integration Points
 
-The region participates in scratch sizing and layout compatibility. Snapshots cannot be restored into a sandbox with a different user data capacity. `MultiUseSandbox::from_snapshot` uses the snapshot layout's user data capacity, even if the caller supplies a different capacity.
+The region participates in scratch sizing and layout compatibility. Snapshots cannot be restored into a sandbox with a different user data capacity; capacity mismatches use the existing layout-mismatch diagnostic rather than a field-specific user data error. `MultiUseSandbox::from_snapshot` uses the snapshot layout's user data capacity, even if the caller supplies a different capacity.
 
 ## User Guide
 
