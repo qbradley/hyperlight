@@ -35,6 +35,16 @@ At the highest level, Hyperlight takes roughly the following steps to create and
    1. In the former case, exit successfully
    2. In any of the latter cases, exit with a failure message
 
+## User data region
+
+Sandboxes can optionally reserve a user data region for transient host/guest byte exchange. The default capacity is zero. When configured, the region is advertised to the guest through the PEB and can be accessed from the host with `MultiUseSandbox::write_user_data`, `MultiUseSandbox::read_user_data`, and `MultiUseSandbox::user_data_size`.
+
+The region is scratch memory, so it is not captured in snapshots. A restore clears the region, including restore performed by convenience call paths that restore the sandbox before returning to the host. The intended exchange pattern is host write, mutating guest call, then host read before restore.
+
+Rust guest helpers expose bounded access to the region. The C guest API exposes `hl_user_data_size()` and `hl_user_data_ptr()`; C callers must use the reported size to bound copies. These APIs are helper-level bounds, not VM guard-page isolation around the region.
+
+Representative tests cover 4097-byte, 64 KiB, and 1 MiB capacities across Rust and C guests. Larger capacities are subject to the sandbox's existing scratch memory limits and should be measured for the application's expected copy and restore costs.
+
 ---
 
 _<sup>[1]</sup> nearly universal support_
