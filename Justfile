@@ -244,7 +244,12 @@ like-ci config=default-target hypervisor="kvm":
     just check-license-headers
 
 # runs all tests
-test target=default-target features="": (test-unit target features) (test-isolated target features) (test-integration target features) (test-doc target features)
+test target=default-target features="": (test-unit target features) (test-isolated target features) (test-integration target features) (test-doc target features) (test-tools target)
+
+# runs the tests of the tools this repository builds for itself, which sit
+# outside the default members the other recipes select
+test-tools target=default-target:
+    {{ cargo-cmd }} test -p hyperlight-ci --profile={{ if target == "debug" { "dev" } else { target } }} {{ target-triple-flag }}
 
 # runs unit tests
 test-unit target=default-target features="":
@@ -377,6 +382,7 @@ fmt-apply: (ensure-nightly-fmt)
 
 clippy target=default-target:
     {{ cargo-cmd }} clippy --all-targets {{ if hyperlight-target-arch == "x86_64" { "--all-features" } else { "" } }} --profile={{ if target == "debug" { "dev" } else { target } }}  {{ target-triple-flag }} -- -D warnings
+    {{ cargo-cmd }} clippy -p hyperlight-ci --all-targets --profile={{ if target == "debug" { "dev" } else { target } }} {{ target-triple-flag }} -- -D warnings
 
 # for use on a linux host-machine when cross-compiling to windows. Uses the windows-gnu which should be sufficient for most purposes
 clippyw target=default-target:
@@ -394,6 +400,7 @@ clippy-apply-fix-windows:
 # Run clippy with feature combinations for all packages
 clippy-exhaustive target=default-target:
     ./hack/clippy-package-features.sh hyperlight-host {{ target }} {{ target-triple }}
+    ./hack/clippy-package-features.sh hyperlight-ci {{ target }} {{ target-triple }}
     ./hack/clippy-package-features.sh hyperlight-guest {{ target }} 
     ./hack/clippy-package-features.sh hyperlight-guest-bin {{ target }}
     ./hack/clippy-package-features.sh hyperlight-guest-macro {{ target }}
@@ -449,26 +456,12 @@ tar-static-lib: (build-rust-capi "release") (build-rust-capi "debug")
 ### BENCHMARKING ###
 ####################
 
-# Warning: can overwrite previous local benchmarks, so run this before running benchmarks
-# Downloads the benchmarks result from the given release tag.
-# If tag is not given, defaults to latest release
-# Options for os: "Windows", or "Linux"
-# Options for Linux hypervisor: "kvm", "mshv3"
-# Options for Windows hypervisor: "hyperv", "hyperv-ws2025"
-# Options for cpu_vendor: "amd", "intel"
-bench-download os hypervisor cpu_vendor tag="":
-    gh release download {{ tag }} -D ./target/ -p benchmarks_{{ os }}_{{ hypervisor }}_{{ cpu_vendor }}.tar.gz
-    mkdir -p target/criterion {{ if os() == "windows" { "-Force" } else { "" } }}
-    tar -zxvf target/benchmarks_{{ os }}_{{ hypervisor }}_{{ cpu_vendor }}.tar.gz -C target/criterion/ --strip-components=1
-
 # Warning: compares to and then OVERWRITES the given baseline
 bench-ci baseline features="":
-    @# Benchmarks are always run with release builds for meaningful results
-    cargo bench --profile=release {{ if features =="" {''} else { "--features " + features } }} -- --verbose --save-baseline {{ baseline }}
+    cargo ci bench {{ if features == "" {''} else { "--features " + features } }} --verbose --save-baseline {{ baseline }}
 
 bench features="":
-    @# Benchmarks are always run with release builds for meaningful results
-    cargo bench --profile=release {{ if features =="" {''} else { "--features " + features } }} -- --verbose
+    cargo ci bench {{ if features == "" {''} else { "--features " + features } }} --verbose
 
 ###############
 ### FUZZING ###
