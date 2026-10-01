@@ -9,7 +9,7 @@ use hyperlight_common::flatbuffer_wrappers::guest_error::ErrorCode;
 use hyperlight_common::func::Bytes;
 use hyperlight_common::log_level::GuestLogFilter;
 use hyperlight_host::sandbox::SandboxConfiguration;
-use hyperlight_host::{HyperlightError, MultiUseSandbox, SandboxBuilder, UninitializedSandbox};
+use hyperlight_host::{HyperlightError, Sandbox, SandboxBuilder, UninitializedSandbox};
 use hyperlight_testing::simplelogger::{LOGGER, SimpleLogger};
 use serial_test::serial;
 use tracing_core::LevelFilter;
@@ -19,6 +19,26 @@ use crate::common::{
     build_rust_sandbox, new_rust_sandbox, with_all_sandboxes, with_c_sandbox, with_c_sandbox_from,
     with_rust_sandbox, with_rust_sandbox_from, with_rust_uninit_sandbox_cfg,
 };
+
+/// The deprecated sandbox paths stay reachable from outside the crate.
+///
+/// This has to live in an integration test. Paths that resolve inside
+/// `hyperlight_host` prove nothing about what downstream crates can reach.
+#[test]
+#[allow(deprecated)]
+fn deprecated_sandbox_paths_stay_public() {
+    use hyperlight_host::sandbox::initialized_multi_use as legacy;
+
+    fn accepts_sandbox(_: Option<Sandbox>) {}
+    fn accepts_status(_: Option<hyperlight_host::SandboxStatus>) {}
+    fn accepts_finder(_: Option<hyperlight_host::sandbox::PtRootFinder>) {}
+
+    accepts_sandbox(None::<hyperlight_host::MultiUseSandbox>);
+    accepts_sandbox(None::<legacy::MultiUseSandbox>);
+    accepts_sandbox(None::<legacy::Sandbox>);
+    accepts_status(None::<legacy::SandboxStatus>);
+    accepts_finder(None::<legacy::PtRootFinder>);
+}
 
 // A host function cannot be interrupted, but we can at least make sure after requesting to interrupt a host call,
 // we don't re-enter the guest again once the host call is done
@@ -916,7 +936,7 @@ fn c_guest_accesses_byte_chunks() {
 fn interrupt_random_kill_stress_test() {
     // Wrapper to hold a sandbox and its snapshot together
     struct SandboxWithSnapshot {
-        sandbox: MultiUseSandbox,
+        sandbox: Sandbox,
         snapshot: Arc<Snapshot>,
     }
 
@@ -1884,7 +1904,7 @@ fn non_pie_guest_hello_world() {
     let sandbox =
         UninitializedSandbox::new(hyperlight_host::GuestBinary::FilePath(path.into()), None)
             .unwrap();
-    let mut multi_use_sandbox: MultiUseSandbox = sandbox.evolve().unwrap();
+    let mut multi_use_sandbox: Sandbox = sandbox.evolve().unwrap();
     let result: i32 = multi_use_sandbox
         .call("PrintOutput", "Hello from non-PIE guest!\n".to_string())
         .unwrap();

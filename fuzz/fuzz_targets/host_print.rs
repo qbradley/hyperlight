@@ -2,11 +2,11 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use hyperlight_host::{MultiUseSandbox, SandboxBuilder};
+use hyperlight_host::{Sandbox, SandboxBuilder};
 use hyperlight_testing::simple_guest_for_fuzzing_as_pathbuf;
 use libfuzzer_sys::{Corpus, fuzz_target};
 
-static SANDBOX: OnceLock<Mutex<MultiUseSandbox>> = OnceLock::new();
+static SANDBOX: OnceLock<Mutex<Sandbox>> = OnceLock::new();
 
 // This fuzz target is used to test the HostPrint host function. We generate
 // an arbitrary ParameterValue::String, which is passed to the guest, which passes
@@ -14,10 +14,10 @@ static SANDBOX: OnceLock<Mutex<MultiUseSandbox>> = OnceLock::new();
 // For fuzzing efficiency, we create one Sandbox and reuse it for all fuzzing iterations.
 fuzz_target!(
     init: {
-        let mu_sbox = SandboxBuilder::from_file(simple_guest_for_fuzzing_as_pathbuf())
+        let sandbox = SandboxBuilder::from_file(simple_guest_for_fuzzing_as_pathbuf())
             .build()
             .unwrap();
-        SANDBOX.set(Mutex::new(mu_sbox)).unwrap();
+        SANDBOX.set(Mutex::new(sandbox)).unwrap();
     },
 
     |data: String| -> Corpus {

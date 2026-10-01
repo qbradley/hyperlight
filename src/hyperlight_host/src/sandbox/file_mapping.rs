@@ -6,8 +6,8 @@
 //! This module splits the file mapping operation into two phases:
 //! - **Prepare** ([`prepare_file_cow`]): performs host-side OS calls
 //!   (open file, create mapping) without requiring a VM.
-//! - **Apply**: performed by the caller (either [`MultiUseSandbox::map_file_cow`]
-//!   or [`evolve_impl_multi_use`]) to map the prepared region into
+//! - **Apply**: performed by the caller (either [`Sandbox::map_file_cow`]
+//!   or [`initialize_sandbox`]) to map the prepared region into
 //!   the guest via [`HyperlightVm::map_region`].
 //!
 //! This separation allows [`UninitializedSandbox`] to accept
