@@ -232,6 +232,63 @@ unsafe fn next_level_table_if_present<Op: TableReadOps>(
     }
 }
 
+unsafe fn read_final_level_descriptor<Op: TableReadOps, P: UpdateParent<Op>>(
+    op: &Op,
+    rq: &MapResponse<Op, P>,
+) -> Option<Mapping> {
+    let desc = unsafe { op.read_entry(rq.entry_ptr) };
+    if let Some(FinalLevelDescriptorKind::Page) = final_level_descriptor_kind(desc) {
+        let phys_addr = bits::<47, 12>(desc) << 12;
+        // Don't sign-extend to canonicalise, because we
+        // only uses addresses in the lower half right
+        // now---VA_BITS does not include the bit that
+        // selects between the ttbr0 and ttbr1 spaces.
+        let virt_addr = rq.vmin;
+        // The division of flags in the mapping structure
+        // does not perfectly capture the fact that
+        // user-level data and instruction access
+        // permissions can be different.  For now, we just
+        // assume that the mapping should be marked as
+        // executable if it was executable to the kernel
+        // at all.
+        let executable = bits::<53, 53>(desc) == 0;
+        let _user_accessible = bits::<6, 6>(desc) != 0; // AP[1]
+        let kind = if bits::<58, 55>(desc) == SOFTWARE_USE_COW as u64 {
+            MappingKind::Cow(CowMapping {
+                readable: true,
+                executable,
+            })
+        } else {
+            MappingKind::Basic(BasicMapping {
+                readable: true,
+                writable: bits::<7, 7>(desc) == 0, // AP[2]
+                executable,
+            })
+        };
+        Some(Mapping {
+            phys_base: phys_addr,
+            virt_base: virt_addr,
+            len: PAGE_SIZE as u64,
+            kind,
+        })
+    } else {
+        let ik = bits::<INVALID_KIND_MAX_BIT, INVALID_KIND_MIN_BIT>(desc);
+        match ik as u8 {
+            INVALID_KIND_ZERO_INIT => Some(Mapping {
+                phys_base: 0,
+                virt_base: rq.vmin,
+                len: PAGE_SIZE as u64,
+                kind: MappingKind::ZeroInit(BasicMapping {
+                    readable: desc & (1 << INVALID_KIND_ZERO_INIT_PERM_READABLE_BIT) != 0,
+                    writable: desc & (1 << INVALID_KIND_ZERO_INIT_PERM_WRITABLE_BIT) != 0,
+                    executable: desc & (1 << INVALID_KIND_ZERO_INIT_PERM_EXECUTABLE_BIT) != 0,
+                }),
+            }),
+            _ => None, // do nothing - there is no mapping to record here
+        }
+    }
+}
+
 /// Page-mapping callback to allocate a next-level page table if necessary.
 ///
 /// Should only be called on a [`MapResponse`] representing an entry
@@ -408,6 +465,40 @@ pub unsafe fn map<Op: TableOps>(op: &Op, mapping: Mapping) {
 }
 
 /// # Safety
+/// See `TableOps` documentation.
+#[allow(clippy::missing_safety_doc)]
+pub unsafe fn modify_mapping<Op: TableOps>(
+    op: &Op,
+    vmin: VirtAddr,
+    len: u64,
+    mut f: impl FnMut(VirtAddr, Mapping) -> MappingKind,
+) {
+    modify_ptes::<47, 39, Op, _>(MapRequest {
+        table_base: op.root_table(),
+        vmin,
+        len,
+        update_parent: Op::TableMovability::root_update_parent(),
+    })
+    .map(|r| unsafe { alloc_table_if_needed(op, r) })
+    .flat_map(modify_ptes::<38, 30, Op, _>)
+    .map(|r| unsafe { alloc_table_if_needed(op, r) })
+    .flat_map(modify_ptes::<29, 21, Op, _>)
+    .map(|r| unsafe { alloc_table_if_needed(op, r) })
+    .flat_map(modify_ptes::<20, 12, Op, _>)
+    .map(|r| unsafe {
+        let mut mapping = read_final_level_descriptor(op, &r).unwrap_or(Mapping {
+            phys_base: 0,
+            virt_base: r.vmin,
+            len: PAGE_SIZE as u64,
+            kind: MappingKind::Unmapped,
+        });
+        mapping.kind = f(r.vmin, mapping);
+        map_page(op, &mapping, r);
+    })
+    .for_each(drop);
+}
+
+/// # Safety
 /// See `TableReadOps` documentation.
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn virt_to_phys<'a, Op: TableReadOps + 'a>(
@@ -481,60 +572,8 @@ unsafe fn internal_walk_va_spaces<'a, Op: TableReadOps + 'a>(
                     }
                     WalkNextLevelResponse::WalkNextLevel(rq) => rq,
                 };
-                let desc = unsafe { op.as_ref().read_entry(rq.entry_ptr) };
-                if let Some(FinalLevelDescriptorKind::Page) = final_level_descriptor_kind(desc) {
-                    let phys_addr = bits::<47, 12>(desc) << 12;
-                    // Don't sign-extend to canonicalise, because we
-                    // only uses addresses in the lower half right
-                    // now---VA_BITS does not include the bit that
-                    // selects between the ttbr0 and ttbr1 spaces.
-                    let virt_addr = rq.vmin;
-                    // The division of flags in the mapping structure
-                    // does not perfectly capture the fact that
-                    // user-level data and instruction access
-                    // permissions can be different.  For now, we just
-                    // assume that the mapping should be marked as
-                    // executable if it was executable to the kernel
-                    // at all.
-                    let executable = bits::<53, 53>(desc) == 0;
-                    let _user_accessible = bits::<6, 6>(desc) != 0; // AP[1]
-                    let kind = if bits::<58, 55>(desc) == SOFTWARE_USE_COW as u64 {
-                        MappingKind::Cow(CowMapping {
-                            readable: true,
-                            executable,
-                        })
-                    } else {
-                        MappingKind::Basic(BasicMapping {
-                            readable: true,
-                            writable: bits::<7, 7>(desc) == 0, // AP[2]
-                            executable,
-                        })
-                    };
-                    Some(SpaceAwareMapping::ThisSpace(Mapping {
-                        phys_base: phys_addr,
-                        virt_base: virt_addr,
-                        len: PAGE_SIZE as u64,
-                        kind,
-                    }))
-                } else {
-                    let ik = bits::<INVALID_KIND_MAX_BIT, INVALID_KIND_MIN_BIT>(desc);
-                    match ik as u8 {
-                        INVALID_KIND_ZERO_INIT => Some(SpaceAwareMapping::ThisSpace(Mapping {
-                            phys_base: 0,
-                            virt_base: rq.vmin,
-                            len: PAGE_SIZE as u64,
-                            kind: MappingKind::ZeroInit(BasicMapping {
-                                readable: desc & (1 << INVALID_KIND_ZERO_INIT_PERM_READABLE_BIT)
-                                    != 0,
-                                writable: desc & (1 << INVALID_KIND_ZERO_INIT_PERM_WRITABLE_BIT)
-                                    != 0,
-                                executable: desc
-                                    & (1 << INVALID_KIND_ZERO_INIT_PERM_EXECUTABLE_BIT)
-                                    != 0,
-                            }),
-                        })),
-                        _ => None, // do nothing - there is no mapping to record here
-                    }
+                unsafe {
+                    read_final_level_descriptor(op.as_ref(), &rq).map(SpaceAwareMapping::ThisSpace)
                 }
             });
         (root_id, iter)

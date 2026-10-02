@@ -441,6 +441,22 @@ pub struct Mapping {
 ///   are being remapped, TLB invalidation may need to be performed
 ///   afterwards.
 pub use arch::map;
+/// Modify an existing mapping in-place, more efficiently than via
+/// virt_to_phys + map.
+///
+/// Assumption: all are page-aligned
+///
+/// # Safety
+/// This function modifies pages backing a virtual memory range which
+/// is inherently unsafe w.r.t.  the Rust memory model.
+///
+/// When using this function, please note:
+/// - No locking is performed before touching page table data structures,
+///   as such do not use concurrently with any other page table operations
+/// - TLB invalidation is not performed, if previously-mapped ranges
+///   are being remapped, TLB invalidation may need to be performed
+///   afterwards.
+pub use arch::modify_mapping;
 /// This function is presently used for reading the tracing data, also
 /// it is useful for debugging
 ///

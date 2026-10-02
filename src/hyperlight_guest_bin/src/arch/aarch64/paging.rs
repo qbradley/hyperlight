@@ -119,6 +119,16 @@ pub unsafe fn map_region(phys_base: u64, virt_base: *mut u8, len: u64, kind: vme
     }
 }
 
+pub unsafe fn modify_mapping(
+    virt_base: *mut u8,
+    len: u64,
+    f: impl FnMut(vmem::VirtAddr, vmem::Mapping) -> vmem::MappingKind,
+) {
+    unsafe {
+        vmem::modify_mapping(&GuestMappingOperations::new(), virt_base as u64, len, f);
+    }
+}
+
 pub fn virt_to_phys(gva: vmem::VirtAddr) -> impl Iterator<Item = vmem::Mapping> {
     unsafe { vmem::virt_to_phys::<_>(GuestMappingOperations::new(), gva, 1) }
 }

@@ -399,6 +399,38 @@ pub unsafe fn map<Op: TableOps>(op: &Op, mapping: Mapping) {
     .for_each(drop);
 }
 
+#[allow(clippy::missing_safety_doc)]
+pub unsafe fn modify_mapping<Op: TableOps>(
+    op: &Op,
+    vmin: VirtAddr,
+    len: u64,
+    mut f: impl FnMut(VirtAddr, Mapping) -> MappingKind,
+) {
+    modify_ptes::<47, 39, Op, _>(MapRequest {
+        table_base: op.root_table(),
+        vmin,
+        len,
+        update_parent: Op::TableMovability::root_update_parent(),
+    })
+    .map(|r| unsafe { alloc_pte_if_needed(op, r) })
+    .flat_map(modify_ptes::<38, 30, Op, _>)
+    .map(|r| unsafe { alloc_pte_if_needed(op, r) })
+    .flat_map(modify_ptes::<29, 21, Op, _>)
+    .map(|r| unsafe { alloc_pte_if_needed(op, r) })
+    .flat_map(modify_ptes::<20, 12, Op, _>)
+    .map(|r| unsafe {
+        let mut mapping = read_and_decode_pte(op, &r).unwrap_or(Mapping {
+            phys_base: 0,
+            virt_base: r.vmin,
+            len: PAGE_SIZE as u64,
+            kind: MappingKind::Unmapped,
+        });
+        mapping.kind = f(r.vmin, mapping);
+        map_page(op, &mapping, r);
+    })
+    .for_each(drop);
+}
+
 unsafe fn read_and_decode_pte<Op: TableReadOps, P: UpdateParent<Op>>(
     op: &Op,
     r: &MapResponse<Op, P>,

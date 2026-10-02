@@ -124,6 +124,25 @@ pub unsafe fn map_region(phys_base: u64, virt_base: *mut u8, len: u64, kind: vme
     }
 }
 
+/// Assumption: all are page-aligned
+/// # Safety
+/// This function modifies pages backing a virtual memory range which is inherently unsafe w.r.t.
+/// the Rust memory model.
+/// When using this function note:
+/// - No locking is performed before touching page table data structures,
+///   as such do not use concurrently with any other page table operations
+/// - TLB invalidation is not performed,
+///   if previously-unmapped ranges are not being mapped, TLB invalidation may need to be performed afterwards.
+pub unsafe fn modify_mapping(
+    virt_base: *mut u8,
+    len: u64,
+    f: impl FnMut(vmem::VirtAddr, vmem::Mapping) -> vmem::MappingKind,
+) {
+    unsafe {
+        vmem::modify_mapping(&GuestMappingOperations::new(), virt_base as u64, len, f);
+    }
+}
+
 pub fn virt_to_phys(gva: vmem::VirtAddr) -> impl Iterator<Item = vmem::Mapping> {
     unsafe { vmem::virt_to_phys::<_>(GuestMappingOperations::new(), gva, 1) }
 }
