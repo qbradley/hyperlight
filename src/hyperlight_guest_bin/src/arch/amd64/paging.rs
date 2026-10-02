@@ -153,6 +153,8 @@ pub fn phys_to_virt(gpa: vmem::PhysAddr) -> Option<*mut u8> {
 
 /// Barriers that other code may need to use when updating page tables
 pub mod barrier {
+    use hyperlight_common::vmem;
+
     /// Call this function when a virtual address has just been made
     /// valid for the first time after the last tlb invalidate that
     /// affected it, and it will be used for the first time in the
@@ -202,6 +204,15 @@ pub mod barrier {
                 mov rax, cr0
                 mov cr0, rax
             ", out("rax") _);
+        }
+    }
+
+    pub fn downgrade_in_place(var: core::ops::Range<vmem::VirtAddr>) {
+        unsafe {
+            // todo: use TLBI RVAE1IS if FEAT_TLBIRANGE is available
+            for va in var.step_by(vmem::PAGE_SIZE) {
+                core::arch::asm!("invlpg [{}]", in(reg) va, options(readonly, nostack, preserves_flags));
+            }
         }
     }
 }

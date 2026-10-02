@@ -138,6 +138,8 @@ pub fn phys_to_virt(gpa: vmem::PhysAddr) -> Option<*mut u8> {
 }
 
 pub mod barrier {
+    use hyperlight_common::vmem;
+
     /// # Architecture-specific (aarch64) notes
     ///
     /// I_WZCBG from [1]:
@@ -169,6 +171,18 @@ pub mod barrier {
                 isb
             "
             );
+        }
+    }
+
+    #[inline(always)]
+    pub fn downgrade_in_place(var: core::ops::Range<vmem::VirtAddr>) {
+        unsafe {
+            core::arch::asm!("dsb ish");
+            // todo: use TLBI RVAE1IS if FEAT_TLBIRANGE is available
+            for va in var.step_by(vmem::PAGE_SIZE) {
+                core::arch::asm!("tlbi vae1is, {}", in(reg) va >> 12);
+            }
+            core::arch::asm!("dsb ish\nisb");
         }
     }
 }

@@ -8,6 +8,12 @@ mod arch;
 pub use arch::{map_region, modify_mapping, phys_to_virt, virt_to_phys};
 /// Barriers that other code may need to use when updating page tables
 pub mod barrier {
+    /// Call this function when a virtual address has had its
+    /// permissions changed in a way that makes previously-valid
+    /// accesses invalid.
+    ///
+    /// Range must be page-aligned.
+    pub use arch::downgrade_in_place;
     /// Call this function when a virtual address has just been made
     /// valid for the first time after the last tlb invalidate that
     /// affected it, and it will be used for the first time in the
