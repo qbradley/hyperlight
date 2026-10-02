@@ -26,6 +26,13 @@ const VA_BITS: usize = 48;
 pub const ATTR_INDEX_NORMAL: u8 = 0;
 const SOFTWARE_USE_COW: u8 = 0b1;
 
+const INVALID_KIND_MIN_BIT: u8 = 2;
+const INVALID_KIND_MAX_BIT: u8 = 2;
+const INVALID_KIND_ZERO_INIT: u8 = 0b1;
+const INVALID_KIND_ZERO_INIT_PERM_READABLE_BIT: u8 = 8;
+const INVALID_KIND_ZERO_INIT_PERM_WRITABLE_BIT: u8 = 9;
+const INVALID_KIND_ZERO_INIT_PERM_EXECUTABLE_BIT: u8 = 10;
+
 // Utility structures
 impl<
     Op: TableOps<TableMovability = crate::vmem::MayMoveTable>,
@@ -172,6 +179,19 @@ unsafe fn map_page<
             false,
         ),
         MappingKind::Unmapped => 0,
+        MappingKind::ZeroInit(bm) => {
+            let mut desc = (INVALID_KIND_ZERO_INIT as u64) << INVALID_KIND_MIN_BIT;
+            if bm.readable {
+                desc |= 1 << INVALID_KIND_ZERO_INIT_PERM_READABLE_BIT
+            }
+            if bm.writable {
+                desc |= 1 << INVALID_KIND_ZERO_INIT_PERM_WRITABLE_BIT
+            }
+            if bm.executable {
+                desc |= 1 << INVALID_KIND_ZERO_INIT_PERM_EXECUTABLE_BIT
+            }
+            desc
+        }
     };
     unsafe {
         write_entry_updating(op, r.update_parent, r.entry_ptr, desc);
@@ -497,7 +517,24 @@ unsafe fn internal_walk_va_spaces<'a, Op: TableReadOps + 'a>(
                         kind,
                     }))
                 } else {
-                    None // do nothing - there is no mapping to record here
+                    let ik = bits::<INVALID_KIND_MAX_BIT, INVALID_KIND_MIN_BIT>(desc);
+                    match ik as u8 {
+                        INVALID_KIND_ZERO_INIT => Some(SpaceAwareMapping::ThisSpace(Mapping {
+                            phys_base: 0,
+                            virt_base: rq.vmin,
+                            len: PAGE_SIZE as u64,
+                            kind: MappingKind::ZeroInit(BasicMapping {
+                                readable: desc & (1 << INVALID_KIND_ZERO_INIT_PERM_READABLE_BIT)
+                                    != 0,
+                                writable: desc & (1 << INVALID_KIND_ZERO_INIT_PERM_WRITABLE_BIT)
+                                    != 0,
+                                executable: desc
+                                    & (1 << INVALID_KIND_ZERO_INIT_PERM_EXECUTABLE_BIT)
+                                    != 0,
+                            }),
+                        })),
+                        _ => None, // do nothing - there is no mapping to record here
+                    }
                 }
             });
         (root_id, iter)

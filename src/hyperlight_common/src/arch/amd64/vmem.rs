@@ -102,6 +102,13 @@ const PAGE_PAT_WB: u64 = 0 << 7; // PAT - page attribute table index bit (0 for 
 const PTE_AVL_MASK: u64 = 0x0000_0000_0000_0E00;
 const PAGE_AVL_COW: u64 = 1 << 9;
 
+const INVALID_KIND_MIN_BIT: u8 = 2;
+const INVALID_KIND_MAX_BIT: u8 = 2;
+const INVALID_KIND_ZERO_INIT: u8 = 0b1;
+const INVALID_KIND_ZERO_INIT_PERM_READABLE_BIT: u8 = 8;
+const INVALID_KIND_ZERO_INIT_PERM_WRITABLE_BIT: u8 = 9;
+const INVALID_KIND_ZERO_INIT_PERM_EXECUTABLE_BIT: u8 = 10;
+
 /// Returns PAGE_RW if writable is true, 0 otherwise
 #[inline(always)]
 const fn page_rw_flag(writable: bool) -> u64 {
@@ -275,6 +282,19 @@ unsafe fn map_page<
                 PAGE_PRESENT // P   - this entry is present
         }
         MappingKind::Unmapped => 0,
+        MappingKind::ZeroInit(bm) => {
+            let mut pte = (INVALID_KIND_ZERO_INIT as u64) << INVALID_KIND_MIN_BIT;
+            if bm.readable {
+                pte |= 1 << INVALID_KIND_ZERO_INIT_PERM_READABLE_BIT
+            }
+            if bm.writable {
+                pte |= 1 << INVALID_KIND_ZERO_INIT_PERM_WRITABLE_BIT
+            }
+            if bm.executable {
+                pte |= 1 << INVALID_KIND_ZERO_INIT_PERM_EXECUTABLE_BIT
+            }
+            pte
+        }
     };
     unsafe {
         write_entry_updating(op, r.update_parent, r.entry_ptr, pte);
@@ -339,34 +359,9 @@ pub unsafe fn walk_va_spaces<Op: TableReadOps>(
         .flat_map(modify_ptes::<20, 12, Op, _>);
 
         for r in iter {
-            let Some(pte) = (unsafe { read_pte_if_present(op, r.entry_ptr) }) else {
-                continue;
-            };
-            let phys_addr = pte & PTE_ADDR_MASK;
-            let sgn_bit = r.vmin >> (VA_BITS - 1);
-            let sgn_bits = 0u64.wrapping_sub(sgn_bit) << VA_BITS;
-            let virt_addr = sgn_bits | r.vmin;
-
-            let executable = (pte & PAGE_NX) == 0;
-            let avl = pte & PTE_AVL_MASK;
-            let kind = if avl == PAGE_AVL_COW {
-                MappingKind::Cow(CowMapping {
-                    readable: true,
-                    executable,
-                })
-            } else {
-                MappingKind::Basic(BasicMapping {
-                    readable: true,
-                    writable: (pte & PAGE_RW) != 0,
-                    executable,
-                })
-            };
-            mappings.push(crate::vmem::SpaceAwareMapping::ThisSpace(Mapping {
-                phys_base: phys_addr,
-                virt_base: virt_addr,
-                len: PAGE_SIZE as u64,
-                kind,
-            }));
+            if let Some(mapping) = unsafe { read_and_decode_pte(op, &r) } {
+                mappings.push(crate::vmem::SpaceAwareMapping::ThisSpace(mapping));
+            }
         }
 
         out.push((root_id, mappings));
@@ -402,6 +397,56 @@ pub unsafe fn map<Op: TableOps>(op: &Op, mapping: Mapping) {
     .flat_map(modify_ptes::<20, 12, Op, _>)
     .map(|r| unsafe { map_page(op, &mapping, r) })
     .for_each(drop);
+}
+
+unsafe fn read_and_decode_pte<Op: TableReadOps, P: UpdateParent<Op>>(
+    op: &Op,
+    r: &MapResponse<Op, P>,
+) -> Option<Mapping> {
+    // Re-do the sign extension
+    let sgn_bit = r.vmin >> (VA_BITS - 1);
+    let sgn_bits = 0u64.wrapping_sub(sgn_bit) << VA_BITS;
+    let virt_addr = sgn_bits | r.vmin;
+
+    let Some(pte) = (unsafe { read_pte_if_present(op, r.entry_ptr) }) else {
+        let pte: u64 = unsafe { op.read_entry(r.entry_ptr) };
+        let ik = crate::vmem::bits::<INVALID_KIND_MAX_BIT, INVALID_KIND_MIN_BIT>(pte);
+        return match ik as u8 {
+            INVALID_KIND_ZERO_INIT => Some(Mapping {
+                phys_base: 0,
+                virt_base: virt_addr,
+                len: PAGE_SIZE as u64,
+                kind: MappingKind::ZeroInit(BasicMapping {
+                    readable: pte & (1 << INVALID_KIND_ZERO_INIT_PERM_READABLE_BIT) != 0,
+                    writable: pte & (1 << INVALID_KIND_ZERO_INIT_PERM_WRITABLE_BIT) != 0,
+                    executable: pte & (1 << INVALID_KIND_ZERO_INIT_PERM_EXECUTABLE_BIT) != 0,
+                }),
+            }),
+            _ => None,
+        };
+    };
+    let phys_addr = pte & PTE_ADDR_MASK;
+
+    let executable = (pte & PAGE_NX) == 0;
+    let avl = pte & PTE_AVL_MASK;
+    let kind = if avl == PAGE_AVL_COW {
+        MappingKind::Cow(CowMapping {
+            readable: true,
+            executable,
+        })
+    } else {
+        MappingKind::Basic(BasicMapping {
+            readable: true,
+            writable: (pte & PAGE_RW) != 0,
+            executable,
+        })
+    };
+    Some(Mapping {
+        phys_base: phys_addr,
+        virt_base: virt_addr,
+        len: PAGE_SIZE as u64,
+        kind,
+    })
 }
 
 // There are no notable architecture-specific safety considerations
@@ -446,35 +491,7 @@ pub unsafe fn virt_to_phys<'a, Op: TableReadOps + 'a>(
     .flat_map(modify_ptes::<29, 21, Op, _>)
     .filter_map(move |r| unsafe { require_pte_exist(op.as_ref(), r) })
     .flat_map(modify_ptes::<20, 12, Op, _>)
-    .filter_map(move |r| {
-        let pte = unsafe { read_pte_if_present(op.as_ref(), r.entry_ptr) }?;
-        let phys_addr = pte & PTE_ADDR_MASK;
-        // Re-do the sign extension
-        let sgn_bit = r.vmin >> (VA_BITS - 1);
-        let sgn_bits = 0u64.wrapping_sub(sgn_bit) << VA_BITS;
-        let virt_addr = sgn_bits | r.vmin;
-
-        let executable = (pte & PAGE_NX) == 0;
-        let avl = pte & PTE_AVL_MASK;
-        let kind = if avl == PAGE_AVL_COW {
-            MappingKind::Cow(CowMapping {
-                readable: true,
-                executable,
-            })
-        } else {
-            MappingKind::Basic(BasicMapping {
-                readable: true,
-                writable: (pte & PAGE_RW) != 0,
-                executable,
-            })
-        };
-        Some(Mapping {
-            phys_base: phys_addr,
-            virt_base: virt_addr,
-            len: PAGE_SIZE as u64,
-            kind,
-        })
-    })
+    .filter_map(move |r| unsafe { read_and_decode_pte(op.as_ref(), &r) })
 }
 
 const VA_BITS: usize = 48; // We use 48-bit virtual addresses at the moment.

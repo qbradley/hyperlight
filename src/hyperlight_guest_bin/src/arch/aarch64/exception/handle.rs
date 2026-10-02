@@ -3,9 +3,7 @@
 use core::fmt::Write;
 
 use hyperlight_common::arch::exn::{DataFault, DataFaultKind, Exception, decode_syndrome};
-use hyperlight_common::vmem::{
-    BasicMapping, CowMapping, MappingKind, PAGE_SIZE, PhysAddr, VirtAddr,
-};
+use hyperlight_common::vmem::{BasicMapping, Mapping, MappingKind, PAGE_SIZE, PhysAddr, VirtAddr};
 use hyperlight_guest::error::ErrorCode;
 use hyperlight_guest::exit::write_abort;
 use hyperlight_guest::layout::{MAIN_STACK_LIMIT_GVA, MAIN_STACK_TOP_GVA};
@@ -37,7 +35,7 @@ fn handle_stack_fault(far: u64) {
     }
 }
 
-fn handle_cow_fault(_orig_phys: PhysAddr, virt: VirtAddr, perms: CowMapping) {
+fn handle_cow_fault(orig_phys: Option<PhysAddr>, virt: VirtAddr, perms: BasicMapping) {
     unsafe {
         let new_page = hyperlight_guest::prim_alloc::alloc_phys_pages(1);
         let target_virt = virt as *mut u8;
@@ -50,22 +48,17 @@ fn handle_cow_fault(_orig_phys: PhysAddr, virt: VirtAddr, perms: CowMapping) {
             // should never reach beyond this call.
             unreachable!();
         };
-        core::ptr::copy(target_virt, scratch_mapping_access, PAGE_SIZE);
+        // Only copy if there is an original page from which to copy
+        if orig_phys.is_some() {
+            core::ptr::copy(target_virt, scratch_mapping_access, PAGE_SIZE);
+        }
         // todo(multithreading): this will definitely require a
         // break-before-make sequence
         crate::paging::map_region(
             new_page,
             target_virt,
             PAGE_SIZE as u64,
-            MappingKind::Basic(BasicMapping {
-                // Inherit R bit from the original mapping (always 1 at the moment)
-                readable: perms.readable,
-                // If we got here, the original marking was marked
-                // CoW, so the copied mapping should always be
-                // writable
-                writable: true,
-                executable: perms.executable,
-            }),
+            MappingKind::Basic(perms),
         );
         // This is updating an entry that was already valid, changing
         // its OA, so we need to actually invalidate the TLB for it.
@@ -86,7 +79,7 @@ pub extern "Rust" fn _debug_print(x: &str) {
     hyperlight_guest::exit::debug_print(x);
 }
 
-fn handle_internal_fault(exn: Exception, far: u64) -> bool {
+fn handle_internal_fault(exn: Exception, far: u64, orig_mapping: Option<Mapping>) -> bool {
     match exn {
         Exception::DataFault(DataFault {
             from_lower_el: false,
@@ -95,6 +88,15 @@ fn handle_internal_fault(exn: Exception, far: u64) -> bool {
         }) => {
             if (MAIN_STACK_LIMIT_GVA..MAIN_STACK_TOP_GVA).contains(&far) {
                 handle_stack_fault(far);
+                true
+            } else if let Some(
+                m @ Mapping {
+                    kind: MappingKind::ZeroInit(bm),
+                    ..
+                },
+            ) = orig_mapping
+            {
+                handle_cow_fault(None, m.virt_base, bm);
                 true
             } else {
                 false
@@ -106,12 +108,23 @@ fn handle_internal_fault(exn: Exception, far: u64) -> bool {
             kind: DataFaultKind::PermissionFault(_),
             ..
         }) => {
-            let mut orig_mappings = crate::paging::virt_to_phys(far);
-            if let Some(mapping) = orig_mappings.next()
-                && let None = orig_mappings.next()
-                && let MappingKind::Cow(cm) = mapping.kind
+            if let Some(
+                m @ Mapping {
+                    kind: MappingKind::Cow(cm),
+                    ..
+                },
+            ) = orig_mapping
             {
-                handle_cow_fault(mapping.phys_base, mapping.virt_base, cm);
+                let bm = BasicMapping {
+                    // Inherit R bit from the original mapping (always 1 at the moment)
+                    readable: cm.readable,
+                    // If we got here, the original marking was marked
+                    // CoW, so the copied mapping should always be
+                    // writable
+                    writable: true,
+                    executable: cm.executable,
+                };
+                handle_cow_fault(Some(m.phys_base), m.virt_base, bm);
                 true
             } else {
                 false
@@ -131,7 +144,9 @@ pub(super) extern "C" fn handle_exception(
 
     if typ == ExceptionType::Synchronous && from == ExceptionFrom::CurrentSP0 {
         let exn = decode_syndrome(esr);
-        if handle_internal_fault(exn, far) {
+        let mut orig_mappings = crate::paging::virt_to_phys(far);
+        let orig_mapping = orig_mappings.next();
+        if handle_internal_fault(exn, far, orig_mapping) {
             return;
         }
     }

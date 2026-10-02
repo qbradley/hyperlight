@@ -413,13 +413,14 @@ pub struct CowMapping {
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum MappingKind {
     Unmapped,
+    ZeroInit(BasicMapping),
     Basic(BasicMapping),
     Cow(CowMapping),
     /* TODO: What useful things other than basic mappings actually
      * require touching the tables? */
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Mapping {
     pub phys_base: u64,
     pub virt_base: u64,

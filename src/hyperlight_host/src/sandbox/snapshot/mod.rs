@@ -517,45 +517,53 @@ impl Snapshot {
                                 if skip_virt(mapping.virt_base, scratch_gva) {
                                     continue;
                                 }
-                                let Some(contents) = (unsafe {
-                                    guest_page(
-                                        snap_c,
-                                        scratch_c,
-                                        &regions,
-                                        layout,
-                                        mapping.phys_base,
-                                    )
-                                }) else {
-                                    continue;
-                                };
 
                                 // Writable pages become CoW in the
                                 // rebuilt snapshot; read-only pages
                                 // stay read-only.
-                                let kind = match mapping.kind {
-                                    MappingKind::Cow(cm) => MappingKind::Cow(cm),
-                                    MappingKind::Basic(bm) if bm.writable => {
+                                let (kind, has_contents) = match mapping.kind {
+                                    MappingKind::Cow(cm) => (MappingKind::Cow(cm), true),
+                                    MappingKind::Basic(bm) if bm.writable => (
                                         MappingKind::Cow(CowMapping {
                                             readable: bm.readable,
                                             executable: bm.executable,
-                                        })
-                                    }
-                                    MappingKind::Basic(bm) => MappingKind::Basic(BasicMapping {
-                                        readable: bm.readable,
-                                        writable: false,
-                                        executable: bm.executable,
-                                    }),
+                                        }),
+                                        true,
+                                    ),
+                                    MappingKind::Basic(bm) => (
+                                        MappingKind::Basic(BasicMapping {
+                                            readable: bm.readable,
+                                            writable: false,
+                                            executable: bm.executable,
+                                        }),
+                                        true,
+                                    ),
                                     MappingKind::Unmapped => continue,
+                                    MappingKind::ZeroInit(bm) => (MappingKind::ZeroInit(bm), false),
                                 };
-                                let new_gpa =
-                                    phys_seen.entry(mapping.phys_base).or_insert_with(|| {
+                                let new_gpa = if has_contents {
+                                    let Some(contents) = (unsafe {
+                                        guest_page(
+                                            snap_c,
+                                            scratch_c,
+                                            &regions,
+                                            layout,
+                                            mapping.phys_base,
+                                        )
+                                    }) else {
+                                        continue;
+                                    };
+                                    Some(*phys_seen.entry(mapping.phys_base).or_insert_with(|| {
                                         let new_offset = snapshot_memory.len();
                                         snapshot_memory.extend(contents);
                                         new_offset + SandboxMemoryLayout::BASE_ADDRESS
-                                    });
+                                    }))
+                                } else {
+                                    None
+                                };
 
                                 let compacted = Mapping {
-                                    phys_base: *new_gpa as u64,
+                                    phys_base: new_gpa.unwrap_or(0) as u64,
                                     virt_base: mapping.virt_base,
                                     len: PAGE_SIZE as u64,
                                     kind,

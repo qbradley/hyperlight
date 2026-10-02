@@ -4,9 +4,7 @@
 use core::fmt::Write;
 
 use hyperlight_common::outb::Exception;
-use hyperlight_common::vmem::{
-    BasicMapping, CowMapping, MappingKind, PAGE_SIZE, PhysAddr, VirtAddr,
-};
+use hyperlight_common::vmem::{BasicMapping, MappingKind, PAGE_SIZE, PhysAddr, VirtAddr};
 use hyperlight_guest::exit::write_abort;
 use hyperlight_guest::layout::{MAIN_STACK_LIMIT_GVA, MAIN_STACK_TOP_GVA};
 
@@ -72,7 +70,7 @@ fn handle_stack_pagefault(gva: u64) {
     }
 }
 
-fn handle_cow_pagefault(_phys: PhysAddr, virt: VirtAddr, perms: CowMapping) {
+fn handle_cow_pagefault(orig_phys: Option<PhysAddr>, virt: VirtAddr, perms: BasicMapping) {
     unsafe {
         let new_page = hyperlight_guest::prim_alloc::alloc_phys_pages(1);
         let target_virt = virt as *mut u8;
@@ -87,7 +85,10 @@ fn handle_cow_pagefault(_phys: PhysAddr, virt: VirtAddr, perms: CowMapping) {
             // should never reach beyond this call.
             unreachable!();
         };
-        core::ptr::copy(target_virt, scratch_mapping_access, PAGE_SIZE);
+        // Only copy if there is an original page from which to copy
+        if orig_phys.is_some() {
+            core::ptr::copy(target_virt, scratch_mapping_access, PAGE_SIZE);
+        }
         // todo(multithreading): when we have multiple threads, we
         // will likely need to (at least in some situations) do a
         // break-before-make sequence here to avoid any possible
@@ -96,15 +97,7 @@ fn handle_cow_pagefault(_phys: PhysAddr, virt: VirtAddr, perms: CowMapping) {
             new_page,
             target_virt,
             PAGE_SIZE as u64,
-            MappingKind::Basic(BasicMapping {
-                // Inherit R bit from the original mapping (always 1 at the moment)
-                readable: perms.readable,
-                // If we got here, the original marking was marked
-                // CoW, so the copied mapping should always be
-                // writable
-                writable: true,
-                executable: perms.executable,
-            }),
+            MappingKind::Basic(perms),
         );
         // This is updating an entry that was already valid, changing
         // its OA, so we need to actually invalidate the TLB for it.
@@ -118,6 +111,10 @@ fn try_handle_internal_pagefault(
     gva: u64,
 ) -> bool {
     let error_code = unsafe { (&raw const (*exn_info).error_code).read_volatile() };
+
+    let mut orig_mappings = crate::paging::virt_to_phys(gva);
+    let orig_mapping = orig_mappings.next();
+
     let present = (error_code & (1 << 0)) != 0; // bit 0 is P
     if !present {
         // If the fault was caused by a not-present page, check if we
@@ -126,9 +123,15 @@ fn try_handle_internal_pagefault(
             handle_stack_pagefault(gva);
             return true;
         }
+        // Or, check if it is in any zero-init region
+        if let Some(mapping) = orig_mapping
+            && let MappingKind::ZeroInit(bm) = mapping.kind
+        {
+            handle_cow_pagefault(None, mapping.virt_base, bm);
+            return true;
+        }
         return false;
     }
-    let mut orig_mappings = crate::paging::virt_to_phys(gva);
 
     let fault_was_rsvd_entry = (error_code & (1 << 3)) != 0;
     if fault_was_rsvd_entry {
@@ -142,16 +145,25 @@ fn try_handle_internal_pagefault(
         // The fault was probably caused by a lack of write
         // permission. Check if that's because the page needs to be
         // CoW'd
-        if let Some(mapping) = orig_mappings.next()
-            && let None = orig_mappings.next()
+        if let Some(mapping) = orig_mapping
             && let MappingKind::Cow(cm) = mapping.kind
         {
-            handle_cow_pagefault(mapping.phys_base, mapping.virt_base, cm);
+            handle_cow_pagefault(
+                Some(mapping.phys_base),
+                mapping.virt_base,
+                BasicMapping {
+                    readable: cm.readable,
+                    writable: true,
+                    executable: cm.executable,
+                },
+            );
             return true;
         }
-
-        return false;
     };
+    if !present && !access_was_user && !access_was_insn {
+        // The fault was probably caused by an unmapped page. Check if
+        // that's because the page needs to be CoW'd
+    }
     false
 }
 
